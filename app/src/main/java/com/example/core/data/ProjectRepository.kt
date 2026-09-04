@@ -21,26 +21,44 @@ class ProjectRepository(private val context: Context) {
 
     suspend fun createNewProject(
         name: String,
-        aspectRatio: AspectRatio
+        aspectRatio: AspectRatio,
+        mainCanvasCamera: Boolean = false
     ): ProjectDocument = withContext(Dispatchers.IO) {
         val (w, h) = aspectRatio.defaultWidth to aspectRatio.defaultHeight
-        val defaultLayers = listOf(
-            Layer(
-                name = "Main Video",
-                type = LayerType.VIDEO,
-                rect = NormalizedRect(0f, 0f, 1f, 1f),
-                zIndex = 0
-            ),
-            Layer(
-                name = "Reaction Camera",
-                type = LayerType.CAMERA,
-                rect = NormalizedRect(0.64f, 0.04f, 0.32f, 0.32f),
-                zIndex = 1
+        val defaultLayers = if (mainCanvasCamera) {
+            listOf(
+                Layer(
+                    name = "Full Canvas Camera",
+                    type = LayerType.CAMERA,
+                    rect = NormalizedRect(0f, 0f, 1f, 1f),
+                    zIndex = 0
+                ),
+                Layer(
+                    name = "Video PiP",
+                    type = LayerType.VIDEO,
+                    rect = NormalizedRect(0.64f, 0.04f, 0.32f, 0.32f),
+                    zIndex = 1
+                )
             )
-        )
+        } else {
+            listOf(
+                Layer(
+                    name = "Main Video",
+                    type = LayerType.VIDEO,
+                    rect = NormalizedRect(0f, 0f, 1f, 1f),
+                    zIndex = 0
+                ),
+                Layer(
+                    name = "Reaction Camera",
+                    type = LayerType.CAMERA,
+                    rect = NormalizedRect(0.64f, 0.04f, 0.32f, 0.32f),
+                    zIndex = 1
+                )
+            )
+        }
 
         val project = ProjectDocument(
-            name = name.ifBlank { "New Reaction Project" },
+            name = name.ifBlank { if (mainCanvasCamera) "Camera Reaction Project" else "New Reaction Project" },
             canvas = com.example.core.model.CanvasSpec(
                 aspectRatio = aspectRatio,
                 width = w,

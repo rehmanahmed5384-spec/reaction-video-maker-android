@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,6 +59,11 @@ fun PipLayerWrapper(
     val offsetXDp = canvasWidthDp * rect.x
     val offsetYDp = canvasHeightDp * rect.y
 
+    // Keep latest values in refs to avoid closure stale state during fast gestures
+    val currentRect by rememberUpdatedState(rect)
+    val currentOnTransformChange by rememberUpdatedState(onTransformChange)
+    val currentOnSelect by rememberUpdatedState(onSelect)
+
     Box(
         modifier = Modifier
             .offset(x = offsetXDp, y = offsetYDp)
@@ -65,9 +71,39 @@ fun PipLayerWrapper(
             .rotate(layer.rotation)
             .pointerInput(layer.id) {
                 detectTapGestures {
-                    onSelect()
+                    currentOnSelect()
                 }
             }
+            .then(
+                if (isSelected && !layer.locked) {
+                    // Support 1-finger drag and 2-finger pinch-to-zoom/stretch across the layer body
+                    Modifier.pointerInput(layer.id + "_transform") {
+                        detectTransformGestures { centroid, pan, zoom, _ ->
+                            val normDx = pan.x / canvasWidthPx.coerceAtLeast(1f)
+                            val normDy = pan.y / canvasHeightPx.coerceAtLeast(1f)
+
+                            val r = currentRect
+                            if (zoom != 1f) {
+                                // Pinch to stretch/scale proportionally from centroid
+                                val newW = (r.width * zoom).coerceIn(0.08f, 1.0f)
+                                val newH = (r.height * zoom).coerceIn(0.08f, 1.0f)
+                                val deltaW = newW - r.width
+                                val deltaH = newH - r.height
+                                val newX = (r.x - deltaW / 2f + normDx).coerceIn(0f, (1f - newW).coerceAtLeast(0f))
+                                val newY = (r.y - deltaH / 2f + normDy).coerceIn(0f, (1f - newH).coerceAtLeast(0f))
+                                currentOnTransformChange(NormalizedRect(newX, newY, newW, newH))
+                            } else {
+                                // 1-finger smooth pan/drag
+                                val newX = (r.x + normDx).coerceIn(0f, (1f - r.width).coerceAtLeast(0f))
+                                val newY = (r.y + normDy).coerceIn(0f, (1f - r.height).coerceAtLeast(0f))
+                                currentOnTransformChange(r.copy(x = newX, y = newY))
+                            }
+                        }
+                    }
+                } else {
+                    Modifier
+                }
+            )
             .then(
                 if (isSelected) {
                     Modifier.border(2.dp, StudioPrimary, RoundedCornerShape(6.dp))
@@ -126,33 +162,15 @@ fun PipLayerWrapper(
             }
         }
 
-        // 8 Interactive PiP handles when selected
+        // 8 Interactive PiP resize & stretch handles when selected
         if (isSelected && !layer.locked) {
             PipEightHandles(
                 onHandleDrag = { handle, dragDeltaX, dragDeltaY ->
                     val normDx = dragDeltaX / canvasWidthPx.coerceAtLeast(1f)
                     val normDy = dragDeltaY / canvasHeightPx.coerceAtLeast(1f)
-                    val newRect = calculateResizedRect(rect, handle, normDx, normDy)
-                    onTransformChange(newRect.clamped())
+                    val newRect = calculateResizedRect(currentRect, handle, normDx, normDy)
+                    currentOnTransformChange(newRect.clamped())
                 }
-            )
-
-            // Center drag handle to move layer
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(layer.id + "_drag") {
-                        detectDragGestures { change, dragAmount ->
-                            change.consume()
-                            val normDx = dragAmount.x / canvasWidthPx.coerceAtLeast(1f)
-                            val normDy = dragAmount.y / canvasHeightPx.coerceAtLeast(1f)
-                            val moved = rect.copy(
-                                x = (rect.x + normDx).coerceIn(0f, (1f - rect.width).coerceAtLeast(0f)),
-                                y = (rect.y + normDy).coerceIn(0f, (1f - rect.height).coerceAtLeast(0f))
-                            )
-                            onTransformChange(moved)
-                        }
-                    }
             )
         }
     }
@@ -173,6 +191,8 @@ fun BoxScope.PipEightHandles(
         HandlePosition.BOTTOM_RIGHT to Alignment.BottomEnd
     )
 
+    val currentOnHandleDrag by rememberUpdatedState(onHandleDrag)
+
     handles.forEach { (position, alignment) ->
         Box(
             modifier = Modifier
@@ -182,17 +202,17 @@ fun BoxScope.PipEightHandles(
                 .pointerInput(position) {
                     detectDragGestures { change, dragAmount ->
                         change.consume()
-                        onHandleDrag(position, dragAmount.x, dragAmount.y)
+                        currentOnHandleDrag(position, dragAmount.x, dragAmount.y)
                     }
                 },
             contentAlignment = Alignment.Center
         ) {
-            // Visible handle is clean and sharp (12dp)
+            // Visible handle is clean, high-contrast, and tactile
             Box(
                 modifier = Modifier
-                    .size(12.dp)
+                    .size(14.dp)
                     .background(StudioPrimary, CircleShape)
-                    .border(1.5.dp, Color.White, CircleShape)
+                    .border(2.dp, Color.White, CircleShape)
             )
         }
     }
@@ -209,49 +229,75 @@ private fun calculateResizedRect(
     var w = current.width
     var h = current.height
 
+    val minSize = 0.08f
+
     when (handle) {
         HandlePosition.TOP_LEFT -> {
-            x += dx
-            y += dy
-            w -= dx
-            h -= dy
+            val newW = (w - dx).coerceAtLeast(minSize)
+            val newH = (h - dy).coerceAtLeast(minSize)
+            x += (w - newW)
+            y += (h - newH)
+            w = newW
+            h = newH
         }
         HandlePosition.TOP_CENTER -> {
-            y += dy
-            h -= dy
+            val newH = (h - dy).coerceAtLeast(minSize)
+            y += (h - newH)
+            h = newH
         }
         HandlePosition.TOP_RIGHT -> {
-            y += dy
-            w += dx
-            h -= dy
+            val newW = (w + dx).coerceAtLeast(minSize)
+            val newH = (h - dy).coerceAtLeast(minSize)
+            y += (h - newH)
+            w = newW
+            h = newH
         }
         HandlePosition.CENTER_LEFT -> {
-            x += dx
-            w -= dx
+            val newW = (w - dx).coerceAtLeast(minSize)
+            x += (w - newW)
+            w = newW
         }
         HandlePosition.CENTER_RIGHT -> {
-            w += dx
+            w = (w + dx).coerceAtLeast(minSize)
         }
         HandlePosition.BOTTOM_LEFT -> {
-            x += dx
-            w -= dx
-            h += dy
+            val newW = (w - dx).coerceAtLeast(minSize)
+            val newH = (h + dy).coerceAtLeast(minSize)
+            x += (w - newW)
+            w = newW
+            h = newH
         }
         HandlePosition.BOTTOM_CENTER -> {
-            h += dy
+            h = (h + dy).coerceAtLeast(minSize)
         }
         HandlePosition.BOTTOM_RIGHT -> {
-            w += dx
-            h += dy
+            w = (w + dx).coerceAtLeast(minSize)
+            h = (h + dy).coerceAtLeast(minSize)
         }
     }
 
-    // Snap to horizontal & vertical center or canvas edges
+    // Keep bounds constrained to 0..1
+    x = x.coerceIn(0f, 1f - minSize)
+    y = y.coerceIn(0f, 1f - minSize)
+    w = w.coerceIn(minSize, 1f - x)
+    h = h.coerceIn(minSize, 1f - y)
+
+    // Snap to edges if close enough
     val snapThreshold = 0.02f
-    if (kotlin.math.abs(x) < snapThreshold) x = 0f
-    if (kotlin.math.abs(y) < snapThreshold) y = 0f
-    if (kotlin.math.abs(x + w - 1f) < snapThreshold) w = 1f - x
-    if (kotlin.math.abs(y + h - 1f) < snapThreshold) h = 1f - y
+    if (x < snapThreshold) {
+        w += x
+        x = 0f
+    }
+    if (y < snapThreshold) {
+        h += y
+        y = 0f
+    }
+    if (1f - (x + w) < snapThreshold) {
+        w = 1f - x
+    }
+    if (1f - (y + h) < snapThreshold) {
+        h = 1f - y
+    }
 
     return NormalizedRect(x, y, w, h)
 }

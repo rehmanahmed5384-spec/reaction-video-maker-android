@@ -217,7 +217,6 @@ fun EditorScreen(
                         canvasHeightDp = canvasHeightDp,
                         onSelect = { selectedLayerId = layer.id },
                         onTransformChange = { newRect ->
-                            pushUndo()
                             project = currentProject.copy(
                                 layers = currentProject.layers.map {
                                     if (it.id == layer.id) it.copy(rect = newRect) else it
@@ -248,6 +247,19 @@ fun EditorScreen(
                             onPreviewViewCreated = { pv ->
                                 activePreviewView = pv
                                 cameraHelper.startCamera(lifecycleOwner, pv, cameraFacing)
+                            },
+                            onFlipCamera = {
+                                activePreviewView?.let { pv ->
+                                    cameraHelper.switchCamera(lifecycleOwner, pv) { newFacing ->
+                                        cameraFacing = newFacing
+                                        isTorchActive = false
+                                        project = currentProject.copy(
+                                            layers = currentProject.layers.map {
+                                                if (it.id == layer.id) it.copy(cameraFacing = newFacing) else it
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         )
                     }
@@ -493,10 +505,24 @@ fun EditorScreen(
                                                 val newLayer = Layer(
                                                     name = "New ${type.name.lowercase().replaceFirstChar { it.uppercase() }}",
                                                     type = type,
+                                                    cameraFacing = cameraFacing,
                                                     rect = NormalizedRect(0.1f, 0.1f, 0.45f, 0.35f),
                                                     zIndex = currentProject.layers.size
                                                 )
                                                 project = currentProject.copy(layers = currentProject.layers + newLayer)
+                                                selectedLayerId = newLayer.id
+                                            },
+                                            onAddFullCamera = {
+                                                pushUndo()
+                                                val newLayer = Layer(
+                                                    name = "Full Canvas Camera",
+                                                    type = LayerType.CAMERA,
+                                                    cameraFacing = cameraFacing,
+                                                    rect = NormalizedRect(0f, 0f, 1f, 1f),
+                                                    zIndex = 0
+                                                )
+                                                val shifted = currentProject.layers.map { it.copy(zIndex = it.zIndex + 1) }
+                                                project = currentProject.copy(layers = listOf(newLayer) + shifted)
                                                 selectedLayerId = newLayer.id
                                             },
                                             onDelete = { id ->
@@ -613,12 +639,27 @@ fun EditorScreen(
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             // Quick Add Layer Buttons
-                            AddLayerChip("+ Cam", Icons.Default.Videocam) {
+                            AddLayerChip("+ Full Cam", Icons.Default.Fullscreen) {
+                                pushUndo()
+                                val newLayer = Layer(
+                                    name = "Full Canvas Camera",
+                                    type = LayerType.CAMERA,
+                                    cameraFacing = cameraFacing,
+                                    rect = NormalizedRect(0f, 0f, 1f, 1f),
+                                    zIndex = 0
+                                )
+                                // If placed at zIndex 0, bump others so it acts as full-screen base
+                                val shiftedLayers = currentProject.layers.map { it.copy(zIndex = it.zIndex + 1) }
+                                project = currentProject.copy(layers = listOf(newLayer) + shiftedLayers)
+                                selectedLayerId = newLayer.id
+                            }
+                            AddLayerChip("+ Cam PiP", Icons.Default.Videocam) {
                                 pushUndo()
                                 val newLayer = Layer(
                                     name = "Camera PiP",
                                     type = LayerType.CAMERA,
-                                    rect = NormalizedRect(0.6f, 0.05f, 0.35f, 0.28f),
+                                    cameraFacing = cameraFacing,
+                                    rect = NormalizedRect(0.6f, 0.05f, 0.35f, 0.32f),
                                     zIndex = currentProject.layers.size
                                 )
                                 project = currentProject.copy(layers = currentProject.layers + newLayer)
@@ -753,7 +794,8 @@ private fun applyOrientation(activity: Activity?, aspect: AspectRatio) {
 fun LayerContentRenderer(
     layer: Layer,
     isMasterPlaying: Boolean,
-    onPreviewViewCreated: (PreviewView) -> Unit
+    onPreviewViewCreated: (PreviewView) -> Unit,
+    onFlipCamera: (() -> Unit)? = null
 ) {
     val isActuallyPlaying = isMasterPlaying && layer.isPlaying && !layer.isFreezeFrame
 
@@ -773,24 +815,38 @@ fun LayerContentRenderer(
                     },
                     modifier = Modifier.fillMaxSize()
                 )
-                // Camera indicator badge
+                // Camera indicator badge with quick front/back flip tap
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(4.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color.Black.copy(alpha = 0.6f))
-                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.7f))
+                        .then(
+                            if (onFlipCamera != null) {
+                                Modifier.clickable { onFlipCamera() }
+                            } else Modifier
+                        )
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(Modifier.size(6.dp).background(StudioError, CircleShape))
-                    Spacer(Modifier.width(3.dp))
+                    Box(Modifier.size(7.dp).background(StudioError, CircleShape))
+                    Spacer(Modifier.width(4.dp))
                     Text(
-                        if (layer.cameraFacing == CameraFacing.FRONT) "FRONT" else "REAR",
+                        if (layer.cameraFacing == CameraFacing.FRONT) "FRONT CAM" else "BACK CAM",
                         fontSize = 9.sp,
                         color = Color.White,
                         fontWeight = FontWeight.Bold
                     )
+                    if (onFlipCamera != null) {
+                        Spacer(Modifier.width(4.dp))
+                        Icon(
+                            Icons.Default.FlipCameraAndroid,
+                            contentDescription = "Flip Camera",
+                            tint = StudioPrimary,
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
                 }
             }
         }
@@ -908,6 +964,7 @@ fun BottomEditingDeck(
     onTabSelect: (String) -> Unit,
     onSelectLayer: (String) -> Unit,
     onAddLayer: (LayerType) -> Unit,
+    onAddFullCamera: () -> Unit,
     onUpdateLayer: (Layer) -> Unit,
     onDeleteLayer: (String) -> Unit,
     onDuplicateLayer: (Layer) -> Unit
@@ -947,6 +1004,7 @@ fun BottomEditingDeck(
                     selectedId = selectedLayerId,
                     onSelect = onSelectLayer,
                     onAdd = onAddLayer,
+                    onAddFullCamera = onAddFullCamera,
                     onDelete = onDeleteLayer,
                     onDuplicate = onDuplicateLayer
                 )
@@ -991,6 +1049,7 @@ fun LayersTabContent(
     selectedId: String?,
     onSelect: (String) -> Unit,
     onAdd: (LayerType) -> Unit,
+    onAddFullCamera: () -> Unit,
     onDelete: (String) -> Unit,
     onDuplicate: (Layer) -> Unit
 ) {
@@ -1000,7 +1059,8 @@ fun LayersTabContent(
             modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            AddLayerChip("+ Camera", Icons.Default.Videocam) { onAdd(LayerType.CAMERA) }
+            AddLayerChip("+ Full Cam", Icons.Default.Fullscreen) { onAddFullCamera() }
+            AddLayerChip("+ Cam PiP", Icons.Default.Videocam) { onAdd(LayerType.CAMERA) }
             AddLayerChip("+ Video", Icons.Default.Movie) { onAdd(LayerType.VIDEO) }
             AddLayerChip("+ Image", Icons.Default.Image) { onAdd(LayerType.IMAGE) }
             AddLayerChip("+ Text", Icons.Default.TextFields) { onAdd(LayerType.TEXT) }
@@ -1204,12 +1264,23 @@ fun TransformTabContent(
 
     Row(
         modifier = Modifier.fillMaxSize(),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Quick rotation buttons
-        Column {
-            Text("Rotate 90Â°", fontSize = 11.sp, color = StudioOnSurfaceVariant)
+        // Quick Fullscreen stretch button
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Full Screen", fontSize = 10.sp, color = StudioOnSurfaceVariant)
+            IconButton(
+                onClick = { onUpdate(selectedLayer.copy(rect = NormalizedRect(0f, 0f, 1f, 1f))) },
+                modifier = Modifier.background(StudioPrimaryContainer, CircleShape)
+            ) {
+                Icon(Icons.Default.Fullscreen, contentDescription = "Full Canvas", tint = StudioPrimary)
+            }
+        }
+
+        // Quick rotation button
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Rotate 90°", fontSize = 10.sp, color = StudioOnSurfaceVariant)
             IconButton(
                 onClick = { onUpdate(selectedLayer.copy(rotation = (selectedLayer.rotation + 90f) % 360f)) },
                 modifier = Modifier.background(StudioSurfaceVariant, CircleShape)
@@ -1218,17 +1289,39 @@ fun TransformTabContent(
             }
         }
 
-        // Fit Mode Chips
+        // Stretch / Size controls
         Column(modifier = Modifier.weight(1f)) {
-            Text("Fit Mode", fontSize = 11.sp, color = StudioOnSurfaceVariant)
-            Spacer(Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Stretch W: ${(selectedLayer.rect.width * 100).toInt()}%  H: ${(selectedLayer.rect.height * 100).toInt()}%",
+                    fontSize = 11.sp,
+                    color = StudioOnSurface,
+                    fontWeight = FontWeight.Bold
+                )
+                // Center layer button
+                TextButton(
+                    onClick = {
+                        val cx = ((1f - selectedLayer.rect.width) / 2f).coerceAtLeast(0f)
+                        val cy = ((1f - selectedLayer.rect.height) / 2f).coerceAtLeast(0f)
+                        onUpdate(selectedLayer.copy(rect = selectedLayer.rect.copy(x = cx, y = cy)))
+                    },
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                    modifier = Modifier.height(24.dp)
+                ) {
+                    Text("Center", fontSize = 10.sp, color = StudioPrimary)
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FitMode.values().take(4).forEach { mode ->
                     val isSelected = selectedLayer.fitMode == mode
                     FilterChip(
                         selected = isSelected,
                         onClick = { onUpdate(selectedLayer.copy(fitMode = mode)) },
-                        label = { Text(mode.name, fontSize = 10.sp) },
+                        label = { Text(mode.name, fontSize = 9.sp) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = StudioPrimaryContainer,
                             selectedLabelColor = StudioPrimary

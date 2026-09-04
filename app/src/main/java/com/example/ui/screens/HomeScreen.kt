@@ -145,8 +145,20 @@ fun HomeScreen(
                 Spacer(Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    QuickAspectCard(
+                        title = "Full Camera",
+                        subtitle = "Camera Canvas",
+                        aspect = AspectRatio.PORTRAIT_9_16,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        coroutineScope.launch {
+                            val p = repository.createNewProject("Camera Reaction", AspectRatio.PORTRAIT_9_16, mainCanvasCamera = true)
+                            onOpenProject(p.id)
+                        }
+                    }
+
                     QuickAspectCard(
                         title = "16:9 Landscape",
                         subtitle = "Gaming & YouTube",
@@ -270,6 +282,7 @@ fun HomeScreen(
     if (showNewProjectDialog) {
         var projectName by remember { mutableStateOf("") }
         var selectedAspect by remember { mutableStateOf(AspectRatio.LANDSCAPE_16_9) }
+        var mainCanvasCamera by remember { mutableStateOf(false) }
 
         AlertDialog(
             onDismissRequest = { showNewProjectDialog = false },
@@ -285,6 +298,31 @@ fun HomeScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().testTag("project_name_input")
                     )
+
+                    // Main Canvas Background Option: Camera vs Video
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (mainCanvasCamera) StudioPrimaryContainer.copy(alpha = 0.5f) else StudioSurfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth().clickable { mainCanvasCamera = !mainCanvasCamera }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = mainCanvasCamera,
+                                onCheckedChange = { mainCanvasCamera = it },
+                                colors = CheckboxDefaults.colors(checkedColor = StudioPrimary)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column {
+                                Text("Full Canvas Camera Background", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = StudioOnSurface)
+                                Text("Use camera as main canvas with draggable video/images on top", fontSize = 10.sp, color = StudioOnSurfaceVariant)
+                            }
+                        }
+                    }
 
                     Text("Canvas Orientation & Aspect Ratio", style = MaterialTheme.typography.labelMedium, color = StudioPrimary)
                     AspectRatio.values().forEach { aspect ->
@@ -315,7 +353,7 @@ fun HomeScreen(
                 Button(
                     onClick = {
                         coroutineScope.launch {
-                            val p = repository.createNewProject(projectName, selectedAspect)
+                            val p = repository.createNewProject(projectName, selectedAspect, mainCanvasCamera)
                             showNewProjectDialog = false
                             onOpenProject(p.id)
                         }
