@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Reaction Studio</string>
+    <string name="subtitle">Ahmed Reaction Studio</string>
+    <string name="new_project">New Project</string>
+    <string name="aspect_16_9">16:9 Landscape</string>
+    <string name="aspect_9_16">9:16 Portrait</string>
+    <string name="aspect_1_1">1:1 Square</string>
+</resources>
