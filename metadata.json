@@ -2,6 +2,7 @@
   "name": "Reaction Studio",
   "description": "Native Android professional video reaction, PiP compositing, and multi-layer recording studio",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
-

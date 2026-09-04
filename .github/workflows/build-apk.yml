@@ -31,15 +31,20 @@ jobs:
           java-version: '21'
           cache: 'gradle'
 
-      - name: Prepare Keystore and Environment
+      - name: Prepare Keystore, Config & Environment
         run: |
-          # Restore debug.keystore if base64 encoded version exists in repo
-          if [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
-            echo "Restored debug.keystore from base64"
+          # 1. Ensure debug.keystore is present
+          if [ ! -f "debug.keystore" ]; then
+            if [ -f "debug.keystore.base64" ]; then
+              base64 -d debug.keystore.base64 > debug.keystore
+              echo "Restored debug.keystore from base64"
+            else
+              echo "Generating standard debug.keystore..."
+              keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            fi
           fi
-          
-          # Ensure .env file exists for secrets plugin
+
+          # 2. Ensure .env file exists for Secrets plugin
           if [ ! -f ".env" ]; then
             if [ -f ".env.example" ]; then
               cp .env.example .env
@@ -49,11 +54,19 @@ jobs:
             echo "Initialized .env configuration"
           fi
 
+          # 3. Ensure app/google-services.json exists for Google Services plugin
+          if [ ! -f "app/google-services.json" ]; then
+            echo '{"project_info":{"project_number":"123456789000","project_id":"reaction-studio-app","storage_bucket":"reaction-studio-app.appspot.com"},"client":[{"client_info":{"mobilesdk_app_id":"1:123456789000:android:abcdef0123456789abcdef","android_client_info":{"package_name":"com.aistudio.reactionstudio.akdf"}},"oauth_client":[],"api_key":[{"current_key":"AIzaSyDummyKeyForGoogleServicesBuild"}],"services":{"appinvite_service":{"other_platform_oauth_client":[]}}}],"configuration_version":"1"}' > app/google-services.json
+            echo "Created fallback google-services.json"
+          fi
+
       - name: Make Gradle Wrapper Executable
         run: chmod +x gradlew
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        env:
+          _JAVA_OPTIONS: "-Djava.awt.headless=true"
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -62,3 +75,4 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 30
+
